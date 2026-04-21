@@ -1,0 +1,250 @@
+import sys
+import math
+import numpy as np
+from PyQt5.QtWidgets import *
+
+# ================= FUNCTION =================
+def f_eval(expr, x):
+    expr = expr.replace("^", "**")
+    allowed = {
+        "x": x,
+        "sin": math.sin,
+        "cos": math.cos,
+        "tan": math.tan,
+        "exp": math.exp,
+        "log": math.log,
+        "sqrt": math.sqrt,
+        "pi": math.pi,
+        "e": math.e
+    }
+    return eval(expr, {"__builtins__": None}, allowed)
+
+# ================= ROOT METHODS =================
+def bisection(f, xl, xu, tol, it):
+    res = ""
+    for i in range(it):
+        xr = (xl + xu) / 2
+        fxr = f_eval(f, xr)
+        res += f"Iter {i+1}: xr={xr:.6f}\n"
+
+        if abs(fxr) < tol:
+            return res + f"\nRoot ≈ {xr}"
+
+        if f_eval(f, xl)*fxr < 0:
+            xu = xr
+        else:
+            xl = xr
+    return res
+
+
+def false_position(f, xl, xu, tol, it):
+    res = ""
+    for i in range(it):
+        xr = xu - (f_eval(f, xu)*(xl-xu))/(f_eval(f, xl)-f_eval(f, xu))
+        res += f"Iter {i+1}: xr={xr:.6f}\n"
+
+        if abs(f_eval(f, xr)) < tol:
+            return res + f"\nRoot ≈ {xr}"
+
+        if f_eval(f, xl)*f_eval(f, xr) < 0:
+            xu = xr
+        else:
+            xl = xr
+    return res
+
+
+def fixed_point(g, x0, tol, it):
+    res = ""
+    for i in range(it):
+        x1 = f_eval(g, x0)
+        res += f"Iter {i+1}: x={x1:.6f}\n"
+
+        if abs(x1 - x0) < tol:
+            return res + f"\nRoot ≈ {x1}"
+        x0 = x1
+    return res
+
+
+def newton(f, df, x0, tol, it):
+    res = ""
+    for i in range(it):
+        fx = f_eval(f, x0)
+        dfx = f_eval(df, x0)
+
+        if abs(dfx) < 1e-10:
+            return "Derivative = 0"
+
+        x1 = x0 - fx/dfx
+        res += f"Iter {i+1}: x={x1:.6f}\n"
+
+        if abs(x1-x0) < tol:
+            return res + f"\nRoot ≈ {x1}"
+        x0 = x1
+    return res
+
+
+def secant(f, x0, x1, tol, it):
+    res = ""
+    for i in range(it):
+        fx0 = f_eval(f, x0)
+        fx1 = f_eval(f, x1)
+
+        x2 = x1 - fx1*(x0-x1)/(fx0-fx1)
+        res += f"Iter {i+1}: x={x2:.6f}\n"
+
+        if abs(x2-x1) < tol:
+            return res + f"\nRoot ≈ {x2}"
+        x0, x1 = x1, x2
+    return res
+
+# ================= LINEAR METHODS =================
+def parse_system(text):
+    lines = text.strip().split("\n")
+    vars_set = set()
+
+    for line in lines:
+        for ch in line:
+            if ch.isalpha():
+                vars_set.add(ch)
+
+    vars_list = sorted(list(vars_set))
+    n = len(vars_list)
+
+    A = []
+    b = []
+
+    for line in lines:
+        left, right = line.split("=")
+        row = [0]*n
+
+        for i, var in enumerate(vars_list):
+            if var in left:
+                import re
+                match = re.findall(rf'([+-]?\d*){var}', left)
+                if match:
+                    coef = match[0]
+                    if coef in ["", "+"]:
+                        coef = 1
+                    elif coef == "-":
+                        coef = -1
+                    row[i] = float(coef)
+        A.append(row)
+        b.append(float(right))
+
+    return np.array(A), np.array(b), vars_list
+
+
+def cramer(A, b):
+    detA = np.linalg.det(A)
+    if abs(detA) < 1e-10:
+        return "No unique solution"
+
+    res = ""
+    for i in range(len(b)):
+        Ai = A.copy()
+        Ai[:, i] = b
+        xi = np.linalg.det(Ai)/detA
+        res += f"x{i+1} = {xi:.6f}\n"
+    return res
+
+
+def gaussian(A, b):
+    x = np.linalg.solve(A, b)
+    return "\n".join([f"x{i+1} = {x[i]:.6f}" for i in range(len(x))])
+
+
+def gauss_jordan(A, b):
+    aug = np.hstack([A, b.reshape(-1,1)])
+    n = len(b)
+
+    for i in range(n):
+        aug[i] = aug[i]/aug[i,i]
+        for j in range(n):
+            if i != j:
+                aug[j] -= aug[j,i]*aug[i]
+
+    return "\n".join([f"x{i+1} = {aug[i,-1]:.6f}" for i in range(n)])
+
+
+def lu(A, b):
+    from scipy.linalg import lu
+    P, L, U = lu(A)
+    y = np.linalg.solve(L, b)
+    x = np.linalg.solve(U, y)
+    return "\n".join([f"x{i+1} = {x[i]:.6f}" for i in range(len(x))])
+
+# ================= GUI =================
+class App(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Numerical Methods Full")
+        self.resize(700,600)
+
+        layout = QVBoxLayout()
+
+        self.method = QComboBox()
+        self.method.addItems([
+            "Bisection","False Position","Fixed Point",
+            "Newton","Secant",
+            "Cramer","Gaussian","Gauss-Jordan","LU"
+        ])
+        layout.addWidget(self.method)
+
+        self.input = QTextEdit()
+        self.input.setText("x^3 - x - 2")
+        layout.addWidget(self.input)
+
+        self.solve_btn = QPushButton("Solve")
+        layout.addWidget(self.solve_btn)
+
+        self.output = QTextEdit()
+        layout.addWidget(self.output)
+
+        self.setLayout(layout)
+
+        self.solve_btn.clicked.connect(self.solve)
+
+    def solve(self):
+        m = self.method.currentText()
+        txt = self.input.toPlainText()
+
+        try:
+            if m == "Bisection":
+                res = bisection(txt,1,2,0.01,50)
+
+            elif m == "False Position":
+                res = false_position(txt,1,2,0.01,50)
+
+            elif m == "Fixed Point":
+                res = fixed_point(txt,1,0.01,50)
+
+            elif m == "Newton":
+                res = newton(txt,"3*x^2-1",1,0.01,50)
+
+            elif m == "Secant":
+                res = secant(txt,1,2,0.01,50)
+
+            else:
+                A,b,vars_list = parse_system(txt)
+
+                if m == "Cramer":
+                    res = cramer(A,b)
+                elif m == "Gaussian":
+                    res = gaussian(A,b)
+                elif m == "Gauss-Jordan":
+                    res = gauss_jordan(A,b)
+                elif m == "LU":
+                    res = lu(A,b)
+
+            self.output.setText(res)
+
+        except Exception as e:
+            self.output.setText("Error: " + str(e))
+
+
+# ================= RUN =================
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    win = App()
+    win.show()
+    sys.exit(app.exec_())
